@@ -1,0 +1,4 @@
+numpy
+dlib==19.21
+tensorflow
+opencv_python

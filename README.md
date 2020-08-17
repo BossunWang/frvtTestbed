@@ -1,5 +1,11 @@
 # frvtTestbed
 Python code to test NIST frvt accuracy of MUGSHOT &amp; pnas datasets
+
+```
+pip install -r requirements.txt
+
+```
+
 * NIST comes with the MUGSHOT dataset for testing
   * 653 pairs (1306 img ppm files)
 * Addition pnas if used for quick verification

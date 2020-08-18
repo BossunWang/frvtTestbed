@@ -90,9 +90,11 @@ win = dlib.image_window()
 
 #get face detected aligned crops
 faceCrops = []
-for f in imageFileList:
+for i, f in enumerate(imageFileList):
     faceCrops.append(faceDetectCrop(f))
     cv2.imshow("faceCrop", faceCrops[-1])
+    cropName = "crop/{}.jpg".format(i)
+    cv2.imwrite(cropName,faceCrops[-1])
     cv2.waitKey(delay=5)
 
 #inference FR

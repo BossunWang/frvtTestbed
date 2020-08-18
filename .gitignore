@@ -128,3 +128,4 @@ dmypy.json
 # Pyre type checker
 .pyre/
 09-02_02-45.pb
+crop/

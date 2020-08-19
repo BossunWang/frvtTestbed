@@ -5,6 +5,11 @@ import dlib
 import numpy as np
 from PIL import Image
 import tensorflow as tf
+import matplotlib.pyplot as plt
+import seaborn as sns
+import matplotlib.pyplot as plt
+import pandas as pd
+from matplotlib.cbook import boxplot_stats
 
 def loadImages(fileDirectory):
     # Load from a file
@@ -76,8 +81,52 @@ def faceFeatureExtract(graph,imageBatch,dim):
             return emb_np
     
 def compareSimilarity(featureFoo, featureBar):
-    similarity = 0.0
+    similarity = 1.00 - ((np.linalg.norm(featureFoo-featureBar))*0.50 - 0.20)
     return similarity
+
+def plotGIBoxScatter(matchScore):
+    #init variables
+    genuineScore = []
+    imposterScore = []
+    genuineX = []
+    imposterX = []
+    X=[]
+    Y=[]
+    knownToUnknown = 0
+    unknownToKnown = 0
+    Known = 0
+    Unknown = 0
+    #label for same id(Genuine) and different id(Imposter)
+    #pnas dataset
+    for i, score in enumerate(matchScore):
+        if i < 12: #Genuine
+            genuineScore.append(score)
+        else:      #Imposter
+            imposterScore.append(score)
+    #plot box and scatter pairs
+    sns.set(style="whitegrid")
+    dfG = pd.DataFrame(genuineScore,columns=['Score'])
+    dfG['Labels'] = 'Genuine'
+    dfI = pd.DataFrame(imposterScore,columns=['Score'])
+    dfI['Labels'] = 'Imposter'
+    frames = [dfG, dfI]
+    result = pd.concat(frames)
+    result.Score = pd.to_numeric(result.Score, errors='coerce')
+    print(result)
+    ax = sns.boxplot(x="Labels", y="Score", data=result, showfliers = False)
+    ax = sns.swarmplot(x="Labels", y="Score", data=result, color=".25")
+    plt.yticks(np.arange(0, 1, 0.2))
+    plt.savefig('pnasGIboxPlot.png')
+    plt.show()
+    #print box plot status
+    dfG.Score = pd.to_numeric(dfG.Score, errors='coerce')
+    statsG = boxplot_stats(dfG['Score'])
+    print('Genuine: ',statsG,'\n')
+    print(statsG[0]['whislo'])
+    dfI.Score = pd.to_numeric(dfI.Score, errors='coerce')
+    statsI = boxplot_stats(dfI['Score'])
+    print('Imposter: ',statsI)
+    return statsG, statsI
 
 #load models
 detector = dlib.get_frontal_face_detector() #dlib FD model
@@ -95,16 +144,23 @@ for i, f in enumerate(imageFileList):
     cv2.imshow("faceCrop", faceCrops[-1])
     cropName = "crop/{}.jpg".format(i)
     cv2.imwrite(cropName,faceCrops[-1])
-    cv2.waitKey(delay=5)
+    cv2.waitKey(delay=1)
 
 #inference FR
 emb_dim = 512
 print(np.shape(faceCrops))
 arrFaceCropBatch = np.array(faceCrops)
-emb_np = faceFeatureExtract(g2,arrFaceCropBatch, emb_dim)
-print(np.shape(emb_np))
-#save features one person a row
+embedding = faceFeatureExtract(g2,arrFaceCropBatch, emb_dim)
+print(np.shape(embedding))
+
+#save features to txt 512-D per person a row
 with open('pnas.txt', 'wb') as f:
-    np.savetxt(f, np.row_stack(emb_np), fmt='%f')
+    np.savetxt(f, np.row_stack(embedding), fmt='%f')
 
-
+#match pairs similarity score
+similarityScores = []
+print(len(embedding))
+for i in range(int(len(embedding)*0.5)):
+    similarityScores.append(compareSimilarity(embedding[2*i], embedding[2*i+1]))
+print(similarityScores)
+plotGIBoxScatter(similarityScores)

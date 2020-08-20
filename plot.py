@@ -13,10 +13,45 @@ from matplotlib.cbook import boxplot_stats
 
 def loadImages(fileDirectory):
     # Load from a file
-    files = glob.glob(fileDirectory+"*.ppm")
-    n = [int(i) for i in map(lambda x: x.split('/')[-1].split('.ppm')[0], files)]
-    files = [x for (y, x) in sorted(zip(n, files))]
-    return files
+    if fileDirectory == "pnas":
+        files = glob.glob(fileDirectory+"/*.ppm")
+        n = [int(i) for i in map(lambda x: x.split('/')[-1].split('.ppm')[0], files)]
+        files = [x for (y, x) in sorted(zip(n, files))]
+        for i in range(len(files)):
+            if i < 12:
+                imgIds = "G"
+            else:
+                imgIds = "I"
+        return files, imgIds
+    elif fileDirectory == "mugshot":
+        enrollDir = []
+        verifDir = []
+        enrollId = []
+        verifId = []
+        with open("input/enroll.txt","r") as f:
+            lines = f.readlines()
+            lines = [l.strip('\n') for l in lines]
+            enrollDir = ([l.strip().split(' ')[1] for l in lines])
+            enrollDir.pop(0)
+            imgName = ([p.strip().split('/')[3] for p in enrollDir])
+            noExtImgName = [n.strip(".ppm") for n in imgName]
+            enrollId = ([n.strip().split('-')[0] for n in noExtImgName])    
+        with open("input/verif.txt","r") as f:
+            lines = f.readlines()
+            lines = [l.strip('\n') for l in lines]
+            verifDir = ([l.strip().split(' ')[1] for l in lines])
+            verifDir.pop(0)
+            imgName = ([p.strip().split('/')[3] for p in verifDir])
+            noExtImgName = [n.strip(".ppm") for n in imgName]
+            verifId = ([n.strip().split('-')[0] for n in noExtImgName])
+        files = [' ']*len(verifDir)
+        imgIds = [' ']*len(verifDir)
+        for i in range(int(len(verifDir)*0.5)):
+            files[2 * i] = enrollDir[i][3:]
+            imgIds[2 * i] = enrollId[i]
+            files[2 * i + 1] = verifDir[i][3:]
+            imgIds[2 * i + 1] = verifId[i]
+        return files, imgIds
 
 def faceDetectCrop(imageFile, size = 112, padding = 0.25):
     # Now process all the images
@@ -45,7 +80,9 @@ def faceDetectCrop(imageFile, size = 112, padding = 0.25):
         # Let's generate the aligned image using get_face_chip
         face_chip = dlib.get_face_chip(img, shape, size=size, padding=padding)
         face_chip = cv2.cvtColor(face_chip, cv2.COLOR_RGB2BGR)
-    return face_chip   
+    if len(dets) == 0:
+        face_chip = np.zeros((size,size,3), np.uint8)
+    return face_chip
 
 def load_graph(frozen_graph_path):
     graph = tf.Graph()
@@ -84,7 +121,7 @@ def compareSimilarity(featureFoo, featureBar):
     similarity = 1.00 - ((np.linalg.norm(featureFoo-featureBar))*0.50 - 0.20)
     return similarity
 
-def plotGIBoxScatter(matchScore):
+def plotGIBoxScatter(matchScore, GIlabel):
     #init variables
     genuineScore = []
     imposterScore = []
@@ -99,9 +136,9 @@ def plotGIBoxScatter(matchScore):
     #label for same id(Genuine) and different id(Imposter)
     #pnas dataset
     for i, score in enumerate(matchScore):
-        if i < 12: #Genuine
+        if GIlabel[i] == True:  #Genuine
             genuineScore.append(score)
-        else:      #Imposter
+        else:           #Imposter
             imposterScore.append(score)
     #plot box and scatter pairs
     sns.set(style="whitegrid")
@@ -116,7 +153,7 @@ def plotGIBoxScatter(matchScore):
     ax = sns.boxplot(x="Labels", y="Score", data=result, showfliers = False)
     ax = sns.swarmplot(x="Labels", y="Score", data=result, color=".25")
     plt.yticks(np.arange(0, 1, 0.2))
-    plt.savefig('pnasGIboxPlot.png')
+    plt.savefig('GIboxPlot.png')
     plt.show()
     #print box plot status
     dfG.Score = pd.to_numeric(dfG.Score, errors='coerce')
@@ -134,7 +171,9 @@ sp = dlib.shape_predictor("geo_vision_5_face_landmarks.dat") #dlib LM model
 g2 = load_graph("09-02_02-45.pb") #tensorflow FR resnet_v1_50 model
 
 #load image list
-imageFileList = loadImages("pnas/")
+# dataset = "pnas"
+dataset = "mugshot"
+imageFileList, idList = loadImages(dataset)
 win = dlib.image_window()
 
 #get face detected aligned crops
@@ -142,7 +181,7 @@ faceCrops = []
 for i, f in enumerate(imageFileList):
     faceCrops.append(faceDetectCrop(f))
     cv2.imshow("faceCrop", faceCrops[-1])
-    cropName = "crop/{}.jpg".format(i)
+    cropName = "{}_crop/{}.jpg".format(dataset, i)
     cv2.imwrite(cropName,faceCrops[-1])
     cv2.waitKey(delay=1)
 
@@ -154,13 +193,19 @@ embedding = faceFeatureExtract(g2,arrFaceCropBatch, emb_dim)
 print(np.shape(embedding))
 
 #save features to txt 512-D per person a row
-with open('pnas.txt', 'wb') as f:
+txtFileName = dataset + '.txt'
+with open(txtFileName, 'wb') as f:
     np.savetxt(f, np.row_stack(embedding), fmt='%f')
 
 #match pairs similarity score
 similarityScores = []
-print(len(embedding))
+GIlabel = []
+# print(len(embedding))
 for i in range(int(len(embedding)*0.5)):
     similarityScores.append(compareSimilarity(embedding[2*i], embedding[2*i+1]))
-print(similarityScores)
-plotGIBoxScatter(similarityScores)
+    if idList[2*i] == idList[2*i + 1]: #G
+        GIlabel.append(True)
+    else:                              #I
+        GIlabel.append(False)
+# print(similarityScores)
+plotGIBoxScatter(similarityScores, GIlabel)

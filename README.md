@@ -16,6 +16,7 @@ python plot.py
 ## TODO list:
 - [x] implement *FD* *LM* *Align* *Crop* *FR* flow for pnas dataset
 - [X] extract and save features to pnas.txt
-- [ ] add MUGSHOT dataset
-- [ ] jupyter notebook (ipynb) to visualize G-I Similarity box scatter chart
+- [X] visualize G-I Similarity box scatter chart
+- [X] add MUGSHOT dataset
+- [ ] cleanup code
 

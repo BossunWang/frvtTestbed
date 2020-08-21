@@ -44,9 +44,9 @@ def loadImages(fileDirectory):
             imgName = ([p.strip().split('/')[3] for p in verifDir])
             noExtImgName = [n.strip(".ppm") for n in imgName]
             verifId = ([n.strip().split('-')[0] for n in noExtImgName])
-        files = [' ']*len(verifDir)
-        imgIds = [' ']*len(verifDir)
-        for i in range(int(len(verifDir)*0.5)):
+        files = [' ']*len(verifDir)*2
+        imgIds = [' ']*len(verifDir)*2
+        for i in range(len(verifDir)):
             files[2 * i] = enrollDir[i][3:]
             imgIds[2 * i] = enrollId[i]
             files[2 * i + 1] = verifDir[i][3:]
@@ -58,8 +58,8 @@ def faceDetectCrop(imageFile, size = 112, padding = 0.25):
     print("Processing file: {}".format(imageFile))
     im_cv = cv2.imread(imageFile)
     img = cv2.cvtColor(im_cv, cv2.COLOR_BGR2RGB)
-    win.clear_overlay()
-    win.set_image(img)
+    # win.clear_overlay()
+    # win.set_image(img)
 
     # Ask the detector to find the bounding boxes of each face. The 1 in the
     # second argument indicates that we should upsample the image 1 time. This
@@ -74,9 +74,9 @@ def faceDetectCrop(imageFile, size = 112, padding = 0.25):
         # Get the landmarks/parts for the face in box d.
         shape = sp(img, d)
         # Draw the face landmarks on the screen so we can see what face is currently being processed.
-        win.clear_overlay()
-        win.add_overlay(d)
-        win.add_overlay(shape)
+        # win.clear_overlay()
+        # win.add_overlay(d)
+        # win.add_overlay(shape)
         # Let's generate the aligned image using get_face_chip
         face_chip = dlib.get_face_chip(img, shape, size=size, padding=padding)
         face_chip = cv2.cvtColor(face_chip, cv2.COLOR_RGB2BGR)
@@ -174,16 +174,16 @@ g2 = load_graph("09-02_02-45.pb") #tensorflow FR resnet_v1_50 model
 # dataset = "pnas"
 dataset = "mugshot"
 imageFileList, idList = loadImages(dataset)
-win = dlib.image_window()
+# win = dlib.image_window()
 
 #get face detected aligned crops
 faceCrops = []
 for i, f in enumerate(imageFileList):
     faceCrops.append(faceDetectCrop(f))
-    cv2.imshow("faceCrop", faceCrops[-1])
+    # cv2.imshow("faceCrop", faceCrops[-1])
     cropName = "{}_crop/{}.jpg".format(dataset, i)
     cv2.imwrite(cropName,faceCrops[-1])
-    cv2.waitKey(delay=1)
+    # cv2.waitKey(delay=1)
 
 #inference FR
 emb_dim = 512

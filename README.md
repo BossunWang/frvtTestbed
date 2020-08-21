@@ -20,3 +20,6 @@ python plot.py
 - [X] add MUGSHOT dataset
 - [ ] cleanup code
 
+## G-I Similarity box scatter chart
+![Alt text](GIboxPlot.png?raw=true "Title")
+

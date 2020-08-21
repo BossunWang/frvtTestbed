@@ -128,4 +128,5 @@ dmypy.json
 # Pyre type checker
 .pyre/
 09-02_02-45.pb
-crop/
+pnas_crop/*.jpg
+mugshot_crop/*.jpg

@@ -21,5 +21,5 @@ python plot.py
 - [ ] cleanup code
 
 ## G-I Similarity box scatter chart
-![Alt text](GIboxPlot.png?raw=true "Title")
+![Alt text](mugshotGIboxPlot.png?raw=true "Title")
 

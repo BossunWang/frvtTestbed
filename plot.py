@@ -11,52 +11,49 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.cbook import boxplot_stats
 
-def loadImages(fileDirectory):
+def loadDataframe(fileDirectory):
     # Load from a file
-    if fileDirectory == "pnas":
-        files = glob.glob(fileDirectory+"/*.ppm")
-        n = [int(i) for i in map(lambda x: x.split('/')[-1].split('.ppm')[0], files)]
-        files = [x for (y, x) in sorted(zip(n, files))]
-        for i in range(len(files)):
-            if i < 12:
-                imgIds = "G"
-            else:
-                imgIds = "I"
-        return files, imgIds
-    elif fileDirectory == "mugshot":
-        enrollDir = []
-        verifDir = []
-        enrollId = []
-        verifId = []
-        with open("input/enroll.txt","r") as f:
-            lines = f.readlines()
-            lines = [l.strip('\n') for l in lines]
-            enrollDir = ([l.strip().split(' ')[1] for l in lines])
-            enrollDir.pop(0)
-            imgName = ([p.strip().split('/')[3] for p in enrollDir])
-            noExtImgName = [n.strip(".ppm") for n in imgName]
-            enrollId = ([n.strip().split('-')[0] for n in noExtImgName])    
-        with open("input/verif.txt","r") as f:
-            lines = f.readlines()
-            lines = [l.strip('\n') for l in lines]
-            verifDir = ([l.strip().split(' ')[1] for l in lines])
-            verifDir.pop(0)
-            imgName = ([p.strip().split('/')[3] for p in verifDir])
-            noExtImgName = [n.strip(".ppm") for n in imgName]
-            verifId = ([n.strip().split('-')[0] for n in noExtImgName])
-        files = [' ']*len(verifDir)*2
-        imgIds = [' ']*len(verifDir)*2
-        for i in range(len(verifDir)):
-            files[2 * i] = enrollDir[i][3:]
-            imgIds[2 * i] = enrollId[i]
-            files[2 * i + 1] = verifDir[i][3:]
-            imgIds[2 * i + 1] = verifId[i]
-        return files, imgIds
+    enrolldir = fileDirectory + "/enroll.txt"
+    verifdir = fileDirectory + "/verif.txt"
+    matchdir = fileDirectory + "/match.txt"
+    dfEnroll = pd.read_csv(enrolldir, delimiter= '\s+', header = None, names=["id", "path", "dataset"])
+    dfVerif = pd.read_csv(verifdir, delimiter= '\s+', header = None, names=["id", "path", "dataset"]) 
+    dfMatch = pd.read_csv(matchdir, delimiter= '\s+', header = None, names=["enroll", "verif"])
+    # Assign headers
+    dfEnroll['path'] = dfEnroll['path'].str[3:]
+    dfVerif['path'] = dfVerif['path'].str[3:]
+    dfMatch['enroll'] = dfMatch['enroll'].str[:-9]
+    dfMatch['verif'] = dfMatch['verif'].str[:-9]
+    # Get UUID
+    imgEnrollName = ([p.strip().split('/')[2] for p in dfEnroll['path']])
+    noExtEnrollName = [n.strip(".ppm") for n in imgEnrollName]
+    enrollUUID = ([n.strip().split('-')[0] for n in noExtEnrollName]) 
+    dfEnroll['UUID'] = enrollUUID
+    imgVerifName = ([p.strip().split('/')[2] for p in dfVerif['path']])
+    noExtVerifName = [n.strip(".ppm") for n in imgVerifName]
+    verifUUID = ([n.strip().split('-')[0] for n in noExtVerifName]) 
+    dfVerif['UUID'] = verifUUID
+    # Assign result columns
+    dfEnroll['features'] = np.nan
+    dfVerif['features'] = np.nan
+    dfMatch['score'] = np.nan
+    dfEnroll['features'] = dfEnroll['features'].astype('object')
+    dfVerif['features'] = dfVerif['features'].astype('object')
+    dfMatch['score'] = dfMatch['score'].astype('object')
+    # Unable to detect a face in the image
+    dfEnroll['FaceDetectionError'] = False
+    dfVerif['FaceDetectionError'] = False
+    # Either or both of the input templates were result of failed feature extraction
+    dfMatch['VerifTemplateError'] = False 
+    print(dfEnroll.head())
+    print(dfVerif.head())
+    print(dfMatch.head())
+    return dfEnroll,dfVerif,dfMatch
 
-def faceDetectCrop(imageFile, size = 112, padding = 0.25):
-    # Now process all the images
-    print("Processing file: {}".format(imageFile))
-    im_cv = cv2.imread(imageFile)
+def faceDetectCrop(inputDataframe, size = 112, padding = 0.25):
+    # Now process the image
+    print("Processing file: {}".format(inputDataframe['path']))
+    im_cv = cv2.imread(inputDataframe['path'].item())
     img = cv2.cvtColor(im_cv, cv2.COLOR_BGR2RGB)
     # win.clear_overlay()
     # win.set_image(img)
@@ -81,8 +78,11 @@ def faceDetectCrop(imageFile, size = 112, padding = 0.25):
         face_chip = dlib.get_face_chip(img, shape, size=size, padding=padding)
         face_chip = cv2.cvtColor(face_chip, cv2.COLOR_RGB2BGR)
     if len(dets) == 0:
+        bFDSuccess = False
         face_chip = np.zeros((size,size,3), np.uint8)
-    return face_chip
+    else:
+        bFDSuccess = True
+    return face_chip, bFDSuccess
 
 def load_graph(frozen_graph_path):
     graph = tf.Graph()
@@ -171,41 +171,76 @@ sp = dlib.shape_predictor("geo_vision_5_face_landmarks.dat") #dlib LM model
 g2 = load_graph("09-02_02-45.pb") #tensorflow FR resnet_v1_50 model
 
 #load image list
-# dataset = "pnas"
-dataset = "mugshot"
-imageFileList, idList = loadImages(dataset)
+dfEnroll, dfVerif, dfMatch = loadDataframe('input')
 # win = dlib.image_window()
 
 #get face detected aligned crops
-faceCrops = []
-for i, f in enumerate(imageFileList):
-    faceCrops.append(faceDetectCrop(f))
-    # cv2.imshow("faceCrop", faceCrops[-1])
-    cropName = "{}_crop/{}.jpg".format(dataset, i)
-    cv2.imwrite(cropName,faceCrops[-1])
+enrollCrops = []
+verifCrops = []
+
+
+for i in range(len(dfVerif)):
+    cropEnroll, bEnrollFDSuccess = faceDetectCrop(dfEnroll.iloc[[i]])
+    if bEnrollFDSuccess:
+        dfEnroll.at[i,'FaceDetectionError']= False
+    else:
+        dfEnroll.at[i,'FaceDetectionError']= True
+    enrollCrops.append(cropEnroll)
+    # cv2.imshow("faceCrop", enrollCrops[-1])
+    enrollName = "{}_crop/{}_enroll.jpg".format(dfEnroll.iloc[[i]].dataset.item(), i)
+    cv2.imwrite(enrollName,enrollCrops[-1])
+    # cv2.waitKey(delay=1)
+    cropVerif, bVerifFDSuccess = faceDetectCrop(dfVerif.iloc[[i]])
+    if bVerifFDSuccess:
+        dfVerif.at[i,'FaceDetectionError']= False
+    else:
+        dfVerif.at[i,'FaceDetectionError']= True
+    verifCrops.append(cropVerif)
+    # cv2.imshow("faceCrop", verifCrops[-1])
+    verifName = "{}_crop/{}_verif.jpg".format(dfVerif.iloc[[i]].dataset.item(), i)
+    cv2.imwrite(verifName,verifCrops[-1])
     # cv2.waitKey(delay=1)
 
 #inference FR
 emb_dim = 512
-print(np.shape(faceCrops))
-arrFaceCropBatch = np.array(faceCrops)
-embedding = faceFeatureExtract(g2,arrFaceCropBatch, emb_dim)
-print(np.shape(embedding))
+embedding = []
+
+arrEnrollCropBatch = np.array(enrollCrops)
+enrollEmbedding = faceFeatureExtract(g2,arrEnrollCropBatch, emb_dim)
+
+arrVerifCropBatch = np.array(verifCrops)
+verifEmbedding = faceFeatureExtract(g2,arrVerifCropBatch, emb_dim)
+ 
+for i in range(len(dfVerif)):
+    if dfEnroll.at[i,'FaceDetectionError'] == False:
+        dfEnroll.at[i, 'features'] = enrollEmbedding[i]
+    if dfVerif.at[i,'FaceDetectionError'] == False:
+        dfVerif.at[i, 'features'] = verifEmbedding[i]
 
 #save features to txt 512-D per person a row
-txtFileName = dataset + '.txt'
-with open(txtFileName, 'wb') as f:
-    np.savetxt(f, np.row_stack(embedding), fmt='%f')
+# txtFileName = dataset + '.txt'
+# with open(txtFileName, 'wb') as f:
+#     np.savetxt(f, np.row_stack(embedding), fmt='%f')
 
 #match pairs similarity score
 similarityScores = []
 GIlabel = []
 # print(len(embedding))
-for i in range(int(len(embedding)*0.5)):
-    similarityScores.append(compareSimilarity(embedding[2*i], embedding[2*i+1]))
-    if idList[2*i] == idList[2*i + 1]: #G
-        GIlabel.append(True)
-    else:                              #I
-        GIlabel.append(False)
-# print(similarityScores)
+for i in range(len(dfMatch)):
+    enrollId = dfMatch.at[i, 'enroll']
+    verifId = dfMatch.at[i, 'verif']
+    filterEnroll = dfEnroll[dfEnroll['id'] == int(enrollId)]
+    filterVerif = dfVerif[dfVerif['id'] == int(verifId)]
+    featureEnroll = filterEnroll['features'].item()
+    featureVerif = filterVerif['features'].item()
+    if dfEnroll.at[i, 'FaceDetectionError'] == True or dfVerif.at[i, 'FaceDetectionError'] == True:
+        dfMatch.at[i, 'score'] = 0
+    else:
+        dfMatch.at[i,'score'] = compareSimilarity(featureEnroll,featureVerif)
+        if dfEnroll.at[i, 'UUID'] == dfVerif.at[i, 'UUID']: #G
+            GIlabel.append(True)
+        else:                                               #I
+            GIlabel.append(False)
+        similarityScores.append(dfMatch.at[i, 'score'])
+print(similarityScores)
 plotGIBoxScatter(similarityScores, GIlabel)

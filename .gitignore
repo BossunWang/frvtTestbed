@@ -129,4 +129,4 @@ dmypy.json
 .pyre/
 09-02_02-45.pb
 pnas_crop/*.jpg
-mugshot_crop/*.jpg
+MUGSHOT_crop/*.jpg

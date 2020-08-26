@@ -23,7 +23,10 @@ python plot.py
 
 ## G-I Similarity box scatter chart
 * MUGSHOT:
+
 ![Alt text](mugshotGIboxPlot.png?raw=true "Title")
+
 * pnas:
+
 ![Alt text](pnasGIboxPlot.png?raw=true "Title")
 

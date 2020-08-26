@@ -20,8 +20,8 @@ def loadDataframe(fileDirectory):
     dfVerif = pd.read_csv(verifdir, delimiter= '\s+', header = None, names=["id", "path", "dataset"]) 
     dfMatch = pd.read_csv(matchdir, delimiter= '\s+', header = None, names=["enroll", "verif"])
     # Assign headers
-    dfEnroll['path'] = dfEnroll['path'].str[3:]
-    dfVerif['path'] = dfVerif['path'].str[3:]
+    dfEnroll['path'] = dfEnroll['path'].str.strip("../")
+    dfVerif['path'] = dfVerif['path'].str.strip("../")
     dfMatch['enroll'] = dfMatch['enroll'].str[:-9]
     dfMatch['verif'] = dfMatch['verif'].str[:-9]
     # Get UUID
@@ -37,14 +37,17 @@ def loadDataframe(fileDirectory):
     dfEnroll['features'] = np.nan
     dfVerif['features'] = np.nan
     dfMatch['score'] = np.nan
+    dfMatch['GIlabel'] = np.nan
     dfEnroll['features'] = dfEnroll['features'].astype('object')
     dfVerif['features'] = dfVerif['features'].astype('object')
     dfMatch['score'] = dfMatch['score'].astype('object')
+    dfMatch['GIlabel'] = dfMatch['GIlabel'].astype('object')
     # Unable to detect a face in the image
     dfEnroll['FaceDetectionError'] = False
     dfVerif['FaceDetectionError'] = False
     # Either or both of the input templates were result of failed feature extraction
-    dfMatch['VerifTemplateError'] = False 
+    dfMatch['VerifTemplateError'] = np.nan 
+    dfMatch['VerifTemplateError'] = dfMatch['VerifTemplateError'].astype('object')
     print(dfEnroll.head())
     print(dfVerif.head())
     print(dfMatch.head())
@@ -121,7 +124,7 @@ def compareSimilarity(featureFoo, featureBar):
     similarity = 1.00 - ((np.linalg.norm(featureFoo-featureBar))*0.50 - 0.20)
     return similarity
 
-def plotGIBoxScatter(matchScore, GIlabel):
+def plotGIBoxScatter(dfMatch):
     #init variables
     genuineScore = []
     imposterScore = []
@@ -134,34 +137,19 @@ def plotGIBoxScatter(matchScore, GIlabel):
     Known = 0
     Unknown = 0
     #label for same id(Genuine) and different id(Imposter)
-    #pnas dataset
-    for i, score in enumerate(matchScore):
-        if GIlabel[i] == True:  #Genuine
-            genuineScore.append(score)
-        else:           #Imposter
-            imposterScore.append(score)
-    #plot box and scatter pairs
-    sns.set(style="whitegrid")
-    dfG = pd.DataFrame(genuineScore,columns=['Score'])
-    dfG['Labels'] = 'Genuine'
-    dfI = pd.DataFrame(imposterScore,columns=['Score'])
-    dfI['Labels'] = 'Imposter'
-    frames = [dfG, dfI]
-    result = pd.concat(frames)
-    result.Score = pd.to_numeric(result.Score, errors='coerce')
-    print(result)
-    ax = sns.boxplot(x="Labels", y="Score", data=result, showfliers = False)
-    ax = sns.swarmplot(x="Labels", y="Score", data=result, color=".25")
-    plt.yticks(np.arange(0, 1, 0.2))
+    # ax = sns.boxplot(x="GIlabel", y="score", data=dfMatch, showfliers = False)
+    ax = sns.swarmplot(x="GIlabel", y="score", data=dfMatch, hue="VerifTemplateError")
+    plt.yticks(np.arange(0, 1, 0.05))
+    plt.grid()
     plt.savefig('GIboxPlot.png')
     plt.show()
     #print box plot status
-    dfG.Score = pd.to_numeric(dfG.Score, errors='coerce')
-    statsG = boxplot_stats(dfG['Score'])
+    # dfG.Score = pd.to_numeric(dfG.Score, errors='coerce')
+    statsG = boxplot_stats(dfMatch['score'])
     print('Genuine: ',statsG,'\n')
     print(statsG[0]['whislo'])
-    dfI.Score = pd.to_numeric(dfI.Score, errors='coerce')
-    statsI = boxplot_stats(dfI['Score'])
+    # dfI.Score = pd.to_numeric(dfI.Score, errors='coerce')
+    statsI = boxplot_stats(dfMatch['score'])
     print('Imposter: ',statsI)
     return statsG, statsI
 
@@ -171,8 +159,14 @@ sp = dlib.shape_predictor("geo_vision_5_face_landmarks.dat") #dlib LM model
 g2 = load_graph("09-02_02-45.pb") #tensorflow FR resnet_v1_50 model
 
 #load image list
-dfEnroll, dfVerif, dfMatch = loadDataframe('input')
+dfEnroll, dfVerif, dfMatch = loadDataframe('mugshotInput')
+# dfEnroll, dfVerif, dfMatch = loadDataframe('pnasInput')
 # win = dlib.image_window()
+
+#for debug use
+# dfEnroll = dfEnroll[:10]
+# dfVerif = dfVerif[:10]
+# dfMatch = dfMatch[:10]
 
 #get face detected aligned crops
 enrollCrops = []
@@ -223,9 +217,6 @@ for i in range(len(dfVerif)):
 #     np.savetxt(f, np.row_stack(embedding), fmt='%f')
 
 #match pairs similarity score
-similarityScores = []
-GIlabel = []
-# print(len(embedding))
 for i in range(len(dfMatch)):
     enrollId = dfMatch.at[i, 'enroll']
     verifId = dfMatch.at[i, 'verif']
@@ -235,12 +226,12 @@ for i in range(len(dfMatch)):
     featureVerif = filterVerif['features'].item()
     if dfEnroll.at[i, 'FaceDetectionError'] == True or dfVerif.at[i, 'FaceDetectionError'] == True:
         dfMatch.at[i, 'score'] = 0
+        dfMatch.at[i, 'VerifTemplateError'] = 'FaceDetectionError'
     else:
         dfMatch.at[i,'score'] = compareSimilarity(featureEnroll,featureVerif)
-        if dfEnroll.at[i, 'UUID'] == dfVerif.at[i, 'UUID']: #G
-            GIlabel.append(True)
-        else:                                               #I
-            GIlabel.append(False)
-        similarityScores.append(dfMatch.at[i, 'score'])
-print(similarityScores)
-plotGIBoxScatter(similarityScores, GIlabel)
+        dfMatch.at[i, 'VerifTemplateError'] = 'MatchSuccess'
+    if dfEnroll.at[i, 'UUID'] == dfVerif.at[i, 'UUID']:
+        dfMatch.at[i, 'GIlabel'] = 'Genuine'
+    else:
+        dfMatch.at[i, 'GIlabel'] = 'Imposter'
+plotGIBoxScatter(dfMatch)

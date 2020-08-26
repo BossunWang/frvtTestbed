@@ -18,8 +18,12 @@ python plot.py
 - [X] extract and save features to pnas.txt
 - [X] visualize G-I Similarity box scatter chart
 - [X] add MUGSHOT dataset
-- [ ] cleanup code
+- [X] add pnas dataset
+- [X] cleanup code (use dataframe instead of list)
 
 ## G-I Similarity box scatter chart
+* MUGSHOT:
 ![Alt text](mugshotGIboxPlot.png?raw=true "Title")
+* pnas:
+![Alt text](pnasGIboxPlot.png?raw=true "Title")
 

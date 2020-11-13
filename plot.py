@@ -5,6 +5,11 @@ import dlib
 import numpy as np
 from PIL import Image
 import tensorflow as tf
+import tqdm
+import torch
+from torchvision import transforms
+import backbone.model_irse_org
+from backbone.model_irse import IR_SE_101, l2_norm
 import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -45,6 +50,9 @@ def loadDataframe(fileDirectory):
     # Unable to detect a face in the image
     dfEnroll['FaceDetectionError'] = False
     dfVerif['FaceDetectionError'] = False
+    # uncertain_score
+    dfEnroll['uncertain_score'] = np.nan
+    dfVerif['uncertain_score'] = np.nan
     # Either or both of the input templates were result of failed feature extraction
     dfMatch['VerifTemplateError'] = np.nan 
     dfMatch['VerifTemplateError'] = dfMatch['VerifTemplateError'].astype('object')
@@ -52,6 +60,7 @@ def loadDataframe(fileDirectory):
     print(dfVerif.head())
     print(dfMatch.head())
     return dfEnroll,dfVerif,dfMatch
+
 
 def faceDetectCrop(inputDataframe, size = 112, padding = 0.25):
     # Now process the image
@@ -97,32 +106,42 @@ def load_graph(frozen_graph_path):
         tf.import_graph_def(graph_def, name="")
     return graph
 
-def faceFeatureExtract(graph,imageBatch,dim):
-    img = np.ndarray(imageBatch.shape,dtype = np.float32)
-    img[:,:,:,0] = (imageBatch[:,:,:,0] - 255.0/2) / (255.0/2)
-    img[:,:,:,1] = (imageBatch[:,:,:,1] - 255.0/2) / (255.0/2)
-    img[:,:,:,2] = (imageBatch[:,:,:,2] - 255.0/2) / (255.0/2)
-    with graph.as_default():
-        x = graph.get_tensor_by_name('input:0')
-        embeddings = graph.get_tensor_by_name('embedding:0')
-        cut_interval = 20
-        with tf.compat.v1.Session(graph = graph) as sess:
-            total_num = img.shape[0]
-            emb_np = np.ndarray(shape=[total_num,dim], dtype=np.float32)
-            cut_ind = np.arange(0,total_num,cut_interval)
-            if cut_ind[-1] != total_num:
-                cut_ind = np.append(cut_ind,total_num)
-            for i in range (cut_ind.shape[0]-1):
-                start = cut_ind[i]
-                end = cut_ind[i+1]
-                temp = sess.run(embeddings,feed_dict = {x:img[start:end]})
-                # print ("temp.shape: {}".format(temp.shape))
-                emb_np[start:end] = temp
-            return emb_np
+def faceFeatureExtract(image, data_transform, device, backbone_model, dul_model, flip=False):
+    img_tensor = read_img(image, data_transform, flip)
+    img_tensor = img_tensor.unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        x, _ = backbone_model(img_tensor)
+        x = l2_norm(x)
+        mu, sigma = dul_model(img_tensor)
+        mu = l2_norm(mu)
+        sigma = torch.exp(sigma)
+        sigma = sigma.cpu().data.numpy().reshape(-1)
+
+        return x, mu, sigma
+
     
 def compareSimilarity(featureFoo, featureBar):
-    similarity = 1.00 - ((np.linalg.norm(featureFoo-featureBar))*0.50 - 0.20)
+    # similarity = 1.00 - ((np.linalg.norm(featureFoo-featureBar))*0.50 - 0.20)
+    similarity = np.dot(featureFoo, featureBar) / (np.linalg.norm(featureFoo) * np.linalg.norm(featureBar))
     return similarity
+
+
+def compareUncertainty(mu1, var1, mu2, var2):
+    mu_diff = np.sqrt(np.sum((mu1 - mu2) ** 2))
+    # print(np.sqrt(mu1 ** 2 - mu2 ** 2))
+    var_sum = var1 + var2
+    score = 0.5 * (mu_diff / var_sum + np.log(var_sum))
+    return score
+
+
+def read_img(img, transform, flip=False):
+    pil_image = Image.fromarray(img)
+    if flip:
+        pil_image = pil_image.transpose(Image.FLIP_LEFT_RIGHT)
+    image_tensor = transform(pil_image)
+    return image_tensor
+
 
 def plotGIBoxScatter(dfMatch):
     #init variables
@@ -137,9 +156,11 @@ def plotGIBoxScatter(dfMatch):
     Known = 0
     Unknown = 0
     #label for same id(Genuine) and different id(Imposter)
-    # ax = sns.boxplot(x="GIlabel", y="score", data=dfMatch, showfliers = False)
-    ax = sns.swarmplot(x="GIlabel", y="score", data=dfMatch, hue="VerifTemplateError")
-    plt.yticks(np.arange(0, 1, 0.05))
+    ax = sns.boxplot(x="GIlabel", y="score", data=dfMatch, showfliers = False)
+    ax = sns.swarmplot(x="GIlabel", y="score", data=dfMatch, color='.2', hue="VerifTemplateError")
+    # ax = sns.boxplot(x="GIlabel", y="uncertainty", data=dfMatch, showfliers=False)
+    # ax = sns.swarmplot(x="GIlabel", y="uncertainty", data=dfMatch, color='.2', hue="VerifTemplateError")
+    # plt.yticks(np.arange(0, 1, 0.05))
     plt.grid()
     plt.savefig('GIboxPlot.png')
     plt.show()
@@ -153,85 +174,207 @@ def plotGIBoxScatter(dfMatch):
     print('Imposter: ',statsI)
     return statsG, statsI
 
-#load models
-detector = dlib.get_frontal_face_detector() #dlib FD model
-sp = dlib.shape_predictor("geo_vision_5_face_landmarks.dat") #dlib LM model
-g2 = load_graph("09-02_02-45.pb") #tensorflow FR resnet_v1_50 model
 
-#load image list
-dfEnroll, dfVerif, dfMatch = loadDataframe('mugshotInput')
-# dfEnroll, dfVerif, dfMatch = loadDataframe('pnasInput')
-# win = dlib.image_window()
+def plotGIUncertain(dfEnroll, dfVerif, dfMatch):
+    dfEnroll_ = dfEnroll[:len(dfVerif)]
 
-#for debug use
-# dfEnroll = dfEnroll[:10]
-# dfVerif = dfVerif[:10]
-# dfMatch = dfMatch[:10]
+    Genuine = dfEnroll_[dfMatch['GIlabel'] == 'Genuine']['uncertain_score'].append(dfVerif[dfMatch['GIlabel'] == 'Genuine']['uncertain_score'], ignore_index=True)
+    Imposter = dfEnroll_[dfMatch['GIlabel'] == 'Imposter']['uncertain_score'].append(dfVerif[dfMatch['GIlabel'] == 'Imposter']['uncertain_score'], ignore_index=True)
+    sns.distplot(Genuine, label='Genuine', hist=False)
+    sns.distplot(Imposter, label='Imposter', hist=False)
+    #label for same id(Genuine) and different id(Imposter)
+    # ax = sns.boxplot(x="GIlabel", y="score", data=dfMatch, showfliers = False)
+    # ax = sns.swarmplot(x="GIlabel", y="score", data=dfMatch, color='.2', hue="VerifTemplateError")
+    # plt.yticks(np.arange(0, 1, 0.05))
+    plt.grid()
+    plt.savefig('plotGIUncertain.png')
+    plt.show()
+    # #print box plot status
+    # # dfG.Score = pd.to_numeric(dfG.Score, errors='coerce')
+    # statsG = boxplot_stats(dfMatch['score'])
+    # print('Genuine: ',statsG,'\n')
+    # print(statsG[0]['whislo'])
+    # # dfI.Score = pd.to_numeric(dfI.Score, errors='coerce')
+    # statsI = boxplot_stats(dfMatch['score'])
+    # print('Imposter: ',statsI)
+    # return statsG, statsI
 
-#get face detected aligned crops
-enrollCrops = []
-verifCrops = []
 
+def main(dataset, crop_dir, load=False):
+    # load image list
+    dfEnroll, dfVerif, dfMatch = loadDataframe(dataset)
 
-for i in range(len(dfVerif)):
-    cropEnroll, bEnrollFDSuccess = faceDetectCrop(dfEnroll.iloc[[i]])
-    if bEnrollFDSuccess:
-        dfEnroll.at[i,'FaceDetectionError']= False
+    # for debug use
+    # dfEnroll = dfEnroll[:10]
+    # dfVerif = dfVerif[:10]
+    # dfMatch = dfMatch[:10]
+    # mugshotInput protocol has bug , should be follow up len(dfVerif)
+    # print(len(dfEnroll))
+    # print(len(dfVerif))
+    #
+    # assert len(dfEnroll) == len(dfVerif)
+
+    # get face detected aligned crops
+    enrollCrops = []
+    verifCrops = []
+
+    for i in range(len(dfVerif)):
+        file_name = dfEnroll.iloc[[i]]['path'].item().split('/')[-1].replace('ppm', 'jpg')
+        # print(file_name)
+
+        crop_img_path = os.path.join(crop_dir, file_name)
+        cropEnroll = None
+        if os.path.isfile(crop_img_path):
+            dfEnroll.at[i, 'FaceDetectionError'] = False
+            cropEnroll = cv2.imread(crop_img_path)
+        else:
+            dfEnroll.at[i, 'FaceDetectionError'] = True
+
+        enrollCrops.append(cropEnroll)
+
+        file_name = dfVerif.iloc[[i]]['path'].item().split('/')[-1].replace('ppm', 'jpg')
+        # print(file_name)
+
+        crop_img_path = os.path.join(crop_dir, file_name)
+        cropVerif = None
+        if os.path.isfile(crop_img_path):
+            dfVerif.at[i, 'FaceDetectionError'] = False
+            cropVerif = cv2.imread(crop_img_path)
+        else:
+            dfVerif.at[i, 'FaceDetectionError'] = True
+
+        verifCrops.append(cropVerif)
+
+    if os.path.isfile('Enroll_embeddings_org_list_' + dataset + '.npy'):
+        Enroll_embeddings_org_list = np.load('Enroll_embeddings_org_list_' + dataset + '.npy')
+        Enroll_embeddings_mu_list = np.load('Enroll_embeddings_mu_list_' + dataset + '.npy')
+        Enroll_embeddings_sigma_list = np.load('Enroll_embeddings_sigma_list_' + dataset + '.npy')
+        Verif_embeddings_org_list = np.load('Verif_embeddings_org_list_' + dataset + '.npy')
+        Verif_embeddings_mu_list = np.load('Verif_embeddings_mu_list_' + dataset + '.npy')
+        Verif_embeddings_sigma_list = np.load('Verif_embeddings_sigma_list_' + dataset + '.npy')
     else:
-        dfEnroll.at[i,'FaceDetectionError']= True
-    enrollCrops.append(cropEnroll)
-    # cv2.imshow("faceCrop", enrollCrops[-1])
-    enrollName = "{}_crop/{}_enroll.jpg".format(dfEnroll.iloc[[i]].dataset.item(), i)
-    cv2.imwrite(enrollName,enrollCrops[-1])
-    # cv2.waitKey(delay=1)
-    cropVerif, bVerifFDSuccess = faceDetectCrop(dfVerif.iloc[[i]])
-    if bVerifFDSuccess:
-        dfVerif.at[i,'FaceDetectionError']= False
-    else:
-        dfVerif.at[i,'FaceDetectionError']= True
-    verifCrops.append(cropVerif)
-    # cv2.imshow("faceCrop", verifCrops[-1])
-    verifName = "{}_crop/{}_verif.jpg".format(dfVerif.iloc[[i]].dataset.item(), i)
-    cv2.imwrite(verifName,verifCrops[-1])
-    # cv2.waitKey(delay=1)
+        #inference FR
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        B = 1
+        INPUT_SIZE = [112, 112]
+        backbone_model_path = './Backbone_IR_SE_101_Epoch_24_Time_2020-11-08-12-25_checkpoint.pth'
+        dul_model_path = './checkpoints/20201109_NPCFace_dul_reg/sota.pth'
+        backbone_model = backbone.model_irse_org.IR_SE_101(INPUT_SIZE).to(device)
+        dul_model = IR_SE_101(INPUT_SIZE).to(device)
 
-#inference FR
-emb_dim = 512
-embedding = []
+        checkpoint = torch.load(backbone_model_path, map_location=lambda storage, loc: storage)
+        backbone_model.load_state_dict(checkpoint)
 
-arrEnrollCropBatch = np.array(enrollCrops)
-enrollEmbedding = faceFeatureExtract(g2,arrEnrollCropBatch, emb_dim)
+        checkpoint = torch.load(dul_model_path, map_location=lambda storage, loc: storage)
+        dul_model.load_state_dict(checkpoint['backbone'])
 
-arrVerifCropBatch = np.array(verifCrops)
-verifEmbedding = faceFeatureExtract(g2,arrVerifCropBatch, emb_dim)
- 
-for i in range(len(dfVerif)):
-    if dfEnroll.at[i,'FaceDetectionError'] == False:
-        dfEnroll.at[i, 'features'] = enrollEmbedding[i]
-    if dfVerif.at[i,'FaceDetectionError'] == False:
-        dfVerif.at[i, 'features'] = verifEmbedding[i]
+        backbone_model.eval()
+        dul_model.eval()
 
-#save features to txt 512-D per person a row
-# txtFileName = dataset + '.txt'
-# with open(txtFileName, 'wb') as f:
-#     np.savetxt(f, np.row_stack(embedding), fmt='%f')
+        data_transform = transforms.Compose([
+            transforms.Resize((INPUT_SIZE[0], INPUT_SIZE[1])),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+        ])
 
-#match pairs similarity score
-for i in range(len(dfMatch)):
-    enrollId = dfMatch.at[i, 'enroll']
-    verifId = dfMatch.at[i, 'verif']
-    filterEnroll = dfEnroll[dfEnroll['id'] == int(enrollId)]
-    filterVerif = dfVerif[dfVerif['id'] == int(verifId)]
-    featureEnroll = filterEnroll['features'].item()
-    featureVerif = filterVerif['features'].item()
-    if dfEnroll.at[i, 'FaceDetectionError'] == True or dfVerif.at[i, 'FaceDetectionError'] == True:
-        dfMatch.at[i, 'score'] = 0
-        dfMatch.at[i, 'VerifTemplateError'] = 'FaceDetectionError'
-    else:
-        dfMatch.at[i,'score'] = compareSimilarity(featureEnroll,featureVerif)
-        dfMatch.at[i, 'VerifTemplateError'] = 'MatchSuccess'
-    if dfEnroll.at[i, 'UUID'] == dfVerif.at[i, 'UUID']:
-        dfMatch.at[i, 'GIlabel'] = 'Genuine'
-    else:
-        dfMatch.at[i, 'GIlabel'] = 'Imposter'
-plotGIBoxScatter(dfMatch)
+        arrEnrollCropBatch = np.array(enrollCrops)
+        Enroll_embeddings_org_list = []
+        Enroll_embeddings_mu_list = []
+        Enroll_embeddings_sigma_list = []
+
+        for i, (image) in tqdm.tqdm(enumerate((arrEnrollCropBatch))):
+            x, mu, sigma = faceFeatureExtract(image, data_transform, device, backbone_model, dul_model)
+            x_flip, mu_flip, sigma_flip = faceFeatureExtract(image, data_transform, device, backbone_model, dul_model, flip=True)
+
+            x = l2_norm(x + x_flip)
+            mu = l2_norm(mu + mu_flip)
+            x = x.cpu().data.numpy()
+            mu = mu.cpu().data.numpy()
+            sigma = np.concatenate((sigma, sigma_flip), axis=0)
+
+            sigma_harmonic = 0.0
+            for v in sigma:
+                sigma_harmonic += 1.0 / v
+            sigma_harmonic = sigma.shape[0] / sigma_harmonic
+
+            Enroll_embeddings_org_list.append(x.reshape(-1))
+            Enroll_embeddings_mu_list.append(mu.reshape(-1))
+            Enroll_embeddings_sigma_list.append(sigma_harmonic)
+
+        arrVerifCropBatch = np.array(verifCrops)
+        Verif_embeddings_org_list = []
+        Verif_embeddings_mu_list = []
+        Verif_embeddings_sigma_list = []
+
+        for i, (image) in tqdm.tqdm(enumerate((arrVerifCropBatch))):
+            x, mu, sigma = faceFeatureExtract(image, data_transform, device, backbone_model, dul_model)
+            x_flip, mu_flip, sigma_flip = faceFeatureExtract(image, data_transform, device, backbone_model, dul_model, flip=True)
+
+            x = l2_norm(x + x_flip)
+            mu = l2_norm(mu + mu_flip)
+            x = x.cpu().data.numpy()
+            mu = mu.cpu().data.numpy()
+            sigma = np.concatenate((sigma, sigma_flip), axis=0)
+
+            sigma_harmonic = 0.0
+            for v in sigma:
+                sigma_harmonic += 1.0 / v
+            sigma_harmonic = sigma.shape[0] / sigma_harmonic
+
+            Verif_embeddings_org_list.append(x.reshape(-1))
+            Verif_embeddings_mu_list.append(mu.reshape(-1))
+            Verif_embeddings_sigma_list.append(sigma_harmonic)
+
+        np.save('Enroll_embeddings_org_list_' + dataset, np.array(Enroll_embeddings_org_list))
+        np.save('Enroll_embeddings_mu_list_' + dataset, np.array(Enroll_embeddings_mu_list))
+        np.save('Enroll_embeddings_sigma_list_' + dataset, np.array(Enroll_embeddings_sigma_list))
+        np.save('Verif_embeddings_org_list_' + dataset, np.array(Verif_embeddings_org_list))
+        np.save('Verif_embeddings_mu_list_' + dataset, np.array(Verif_embeddings_mu_list))
+        np.save('Verif_embeddings_sigma_list_' + dataset, np.array(Verif_embeddings_sigma_list))
+
+    for i in range(len(dfVerif)):
+        if dfEnroll.at[i,'FaceDetectionError'] == False:
+            # dfEnroll.at[i, 'features'] = Enroll_embeddings_org_list[i]
+            dfEnroll.at[i, 'features'] = Enroll_embeddings_mu_list[i]
+            dfEnroll.at[i, 'uncertain_score'] = Enroll_embeddings_sigma_list[i]
+        if dfVerif.at[i,'FaceDetectionError'] == False:
+            # dfVerif.at[i, 'features'] = Verif_embeddings_org_list[i]
+            dfVerif.at[i, 'features'] = Verif_embeddings_mu_list[i]
+            dfVerif.at[i, 'uncertain_score'] = Verif_embeddings_sigma_list[i]
+
+    #save features to txt 512-D per person a row
+    # txtFileName = dataset + '.txt'
+    # with open(txtFileName, 'wb') as f:
+    #     np.savetxt(f, np.row_stack(embedding), fmt='%f')
+
+    #match pairs similarity score
+    for i in range(len(dfMatch)):
+        enrollId = dfMatch.at[i, 'enroll']
+        verifId = dfMatch.at[i, 'verif']
+        filterEnroll = dfEnroll[dfEnroll['id'] == int(enrollId)]
+        filterVerif = dfVerif[dfVerif['id'] == int(verifId)]
+        featureEnroll = filterEnroll['features'].item()
+        featureVerif = filterVerif['features'].item()
+        sigmaEnroll = filterEnroll['uncertain_score'].item()
+        sigmaVerif = filterVerif['uncertain_score'].item()
+        if dfEnroll.at[i, 'FaceDetectionError'] == True or dfVerif.at[i, 'FaceDetectionError'] == True:
+            dfMatch.at[i, 'score'] = 0
+            dfMatch.at[i, 'VerifTemplateError'] = 'FaceDetectionError'
+        else:
+            dfMatch.at[i, 'score'] = compareSimilarity(featureEnroll,featureVerif)
+            dfMatch.at[i, 'uncertainty'] = compareUncertainty(featureEnroll, sigmaEnroll, featureVerif, sigmaVerif)
+            dfMatch.at[i, 'VerifTemplateError'] = 'MatchSuccess'
+        if dfEnroll.at[i, 'UUID'] == dfVerif.at[i, 'UUID']:
+            dfMatch.at[i, 'GIlabel'] = 'Genuine'
+        else:
+            dfMatch.at[i, 'GIlabel'] = 'Imposter'
+
+    plotGIBoxScatter(dfMatch)
+    plotGIUncertain(dfEnroll, dfVerif, dfMatch)
+
+
+if __name__ == '__main__':
+    crop_dir = 'pnas_crop'
+    main('pnasInput', crop_dir)
+    crop_dir = 'mugshot_crop'
+    main('mugshotInput', crop_dir)

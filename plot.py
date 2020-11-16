@@ -257,8 +257,8 @@ def main(dataset, crop_dir, load=False):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         B = 1
         INPUT_SIZE = [112, 112]
-        backbone_model_path = './Backbone_IR_SE_101_Epoch_24_Time_2020-11-08-12-25_checkpoint.pth'
-        dul_model_path = './checkpoints/20201109_NPCFace_dul_reg/sota.pth'
+        backbone_model_path = './Backbone_IR_SE_101_Epoch_24_Time_2020-11-13-12-50_checkpoint.pth'
+        dul_model_path = './checkpoints/20201115_NPCFace_casia_mask_dul_reg/sota.pth'
         backbone_model = backbone.model_irse_org.IR_SE_101(INPUT_SIZE).to(device)
         dul_model = IR_SE_101(INPUT_SIZE).to(device)
 
@@ -334,12 +334,12 @@ def main(dataset, crop_dir, load=False):
 
     for i in range(len(dfVerif)):
         if dfEnroll.at[i,'FaceDetectionError'] == False:
-            # dfEnroll.at[i, 'features'] = Enroll_embeddings_org_list[i]
-            dfEnroll.at[i, 'features'] = Enroll_embeddings_mu_list[i]
+            dfEnroll.at[i, 'features'] = Enroll_embeddings_org_list[i]
+            # dfEnroll.at[i, 'features'] = Enroll_embeddings_mu_list[i]
             dfEnroll.at[i, 'uncertain_score'] = Enroll_embeddings_sigma_list[i]
         if dfVerif.at[i,'FaceDetectionError'] == False:
-            # dfVerif.at[i, 'features'] = Verif_embeddings_org_list[i]
-            dfVerif.at[i, 'features'] = Verif_embeddings_mu_list[i]
+            dfVerif.at[i, 'features'] = Verif_embeddings_org_list[i]
+            # dfVerif.at[i, 'features'] = Verif_embeddings_mu_list[i]
             dfVerif.at[i, 'uncertain_score'] = Verif_embeddings_sigma_list[i]
 
     #save features to txt 512-D per person a row

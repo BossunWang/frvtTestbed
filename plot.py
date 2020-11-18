@@ -56,9 +56,9 @@ def loadDataframe(fileDirectory):
     # Either or both of the input templates were result of failed feature extraction
     dfMatch['VerifTemplateError'] = np.nan 
     dfMatch['VerifTemplateError'] = dfMatch['VerifTemplateError'].astype('object')
-    print(dfEnroll.head())
-    print(dfVerif.head())
-    print(dfMatch.head())
+    # print(dfEnroll.head())
+    # print(dfVerif.head())
+    # print(dfMatch.head())
     return dfEnroll,dfVerif,dfMatch
 
 
@@ -157,7 +157,7 @@ def plotGIBoxScatter(dfMatch):
     Unknown = 0
     #label for same id(Genuine) and different id(Imposter)
     ax = sns.boxplot(x="GIlabel", y="score", data=dfMatch, showfliers = False)
-    ax = sns.swarmplot(x="GIlabel", y="score", data=dfMatch, color='.2', hue="VerifTemplateError")
+    ax = sns.swarmplot(x="GIlabel", y="score", data=dfMatch, color='.2', hue="VerifTemplateError", palette='Set1')
     # ax = sns.boxplot(x="GIlabel", y="uncertainty", data=dfMatch, showfliers=False)
     # ax = sns.swarmplot(x="GIlabel", y="uncertainty", data=dfMatch, color='.2', hue="VerifTemplateError")
     # plt.yticks(np.arange(0, 1, 0.05))
@@ -242,22 +242,23 @@ def main(dataset, crop_dir, load=False):
             cropVerif = cv2.imread(crop_img_path)
         else:
             dfVerif.at[i, 'FaceDetectionError'] = True
+            print('FaceDetectionError:', crop_img_path)
 
         verifCrops.append(cropVerif)
 
     if os.path.isfile('Enroll_embeddings_org_list_' + dataset + '.npy'):
-        Enroll_embeddings_org_list = np.load('Enroll_embeddings_org_list_' + dataset + '.npy')
-        Enroll_embeddings_mu_list = np.load('Enroll_embeddings_mu_list_' + dataset + '.npy')
-        Enroll_embeddings_sigma_list = np.load('Enroll_embeddings_sigma_list_' + dataset + '.npy')
-        Verif_embeddings_org_list = np.load('Verif_embeddings_org_list_' + dataset + '.npy')
-        Verif_embeddings_mu_list = np.load('Verif_embeddings_mu_list_' + dataset + '.npy')
-        Verif_embeddings_sigma_list = np.load('Verif_embeddings_sigma_list_' + dataset + '.npy')
+        Enroll_embeddings_org_list = np.load('Enroll_embeddings_org_list_' + dataset + '.npy', allow_pickle=True)
+        Enroll_embeddings_mu_list = np.load('Enroll_embeddings_mu_list_' + dataset + '.npy', allow_pickle=True)
+        Enroll_embeddings_sigma_list = np.load('Enroll_embeddings_sigma_list_' + dataset + '.npy', allow_pickle=True)
+        Verif_embeddings_org_list = np.load('Verif_embeddings_org_list_' + dataset + '.npy', allow_pickle=True)
+        Verif_embeddings_mu_list = np.load('Verif_embeddings_mu_list_' + dataset + '.npy', allow_pickle=True)
+        Verif_embeddings_sigma_list = np.load('Verif_embeddings_sigma_list_' + dataset + '.npy', allow_pickle=True)
     else:
         #inference FR
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         B = 1
         INPUT_SIZE = [112, 112]
-        backbone_model_path = './Backbone_IR_SE_101_Epoch_24_Time_2020-11-13-12-50_checkpoint.pth'
+        backbone_model_path = './Backbone_IR_SE_101_Epoch_23_Time_2020-10-05-15-56_checkpoint.pth'
         dul_model_path = './checkpoints/20201115_NPCFace_casia_mask_dul_reg/sota.pth'
         backbone_model = backbone.model_irse_org.IR_SE_101(INPUT_SIZE).to(device)
         dul_model = IR_SE_101(INPUT_SIZE).to(device)
@@ -283,6 +284,12 @@ def main(dataset, crop_dir, load=False):
         Enroll_embeddings_sigma_list = []
 
         for i, (image) in tqdm.tqdm(enumerate((arrEnrollCropBatch))):
+            if image is None:
+                Enroll_embeddings_org_list.append(None)
+                Enroll_embeddings_mu_list.append(None)
+                Enroll_embeddings_sigma_list.append(None)
+                continue
+
             x, mu, sigma = faceFeatureExtract(image, data_transform, device, backbone_model, dul_model)
             x_flip, mu_flip, sigma_flip = faceFeatureExtract(image, data_transform, device, backbone_model, dul_model, flip=True)
 
@@ -307,6 +314,11 @@ def main(dataset, crop_dir, load=False):
         Verif_embeddings_sigma_list = []
 
         for i, (image) in tqdm.tqdm(enumerate((arrVerifCropBatch))):
+            if image is None:
+                Verif_embeddings_org_list.append(None)
+                Verif_embeddings_mu_list.append(None)
+                Verif_embeddings_sigma_list.append(None)
+                continue
             x, mu, sigma = faceFeatureExtract(image, data_transform, device, backbone_model, dul_model)
             x_flip, mu_flip, sigma_flip = faceFeatureExtract(image, data_transform, device, backbone_model, dul_model, flip=True)
 

@@ -57,10 +57,15 @@ def generate_file_list(data_dir, file_list):
                 file_list.append(filepath)
 
 
+# protocol_folder = "mugshotInput"
+# dataset_folder = "../face_dataset/NIST_SD32_MEDS_II_face_crop"
+# masked_dataset_folder = "../face_dataset/NIST_SD32_MEDS_II_face_crop_mask"
+# file_name = "MEDS_unmask_pairs.txt"
+
 protocol_folder = "mugshotInput"
-dataset_folder = "../face_dataset/NIST_SD32_MEDS_II_face_crop"
-masked_dataset_folder = "../face_dataset/NIST_SD32_MEDS_II_face_crop_mask"
-file_name = "MEDS_unmask_pairs.txt"
+dataset_folder = "../face_dataset/NIST_SD32_MEDS_II_face_RetinaFaceCoV_crop"
+masked_dataset_folder = "../face_dataset/NIST_SD32_MEDS_II_face_FMA_mask_RetinaFaceCoV_crop"
+file_name = "MEDS_unmask_RetinaFaceCoV_crop_pairs.txt"
 
 dfEnroll, dfVerif, dfMatch = loadDataframe(protocol_folder)
 
